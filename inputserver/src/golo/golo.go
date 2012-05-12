@@ -7,12 +7,8 @@ package golo
 import "C"
 
 import (
-	// "fmt"
 	"unsafe"
-)
-
-var (
-	chanmap = make(map[int]chan *Message)
+	"errors"
 )
 
 type Message struct {
@@ -20,28 +16,26 @@ type Message struct {
 	Params []interface{}
 }
 
-func StartServer(port int, c chan *Message) {
-	C.start_server(C.int(port))
-	chanmap[port] = c
-}
+func Deserialize(data []byte) (*Message, error) {
+	cdata := unsafe.Pointer(&data[0])
+	cdatalen := C.size_t(len(data))
 
-//export callback
-func callback(path, ctypes *C.char, argv **C.lo_arg, argc int, user_data unsafe.Pointer) {
-	panic("IN HERE")
-	c, ok := chanmap[int(uintptr(user_data))]
-	if !ok {
-		panic("Unknown callback")
+	msg := C.lo_message_deserialise(cdata, cdatalen, (*C.int)(unsafe.Pointer(nil)))
+	if msg == nil {
+		// TODO: Obtain and parse actual error?
+		return nil, errors.New("Deserialisation failed")
 	}
 
-	msg := &Message {
-		Path: C.GoString(path),
-		Params: make([]interface{}, 0, 1),
+	result := &Message{
+		Path: C.GoString(C.lo_get_path(cdata, C.ssize_t(cdatalen))),
+		Params: make([]interface{}, 0, 10),
 	}
-	types := C.GoString(ctypes)
+	argc := int(C.lo_message_get_argc(msg))
+	argtypes := C.GoString(C.lo_message_get_types(msg))
+	argv := C.lo_message_get_argv(msg)
 	for i := 0; i < argc; i++ {
-
-		val := interface{}(nil)
-		switch types[i] {
+		var val interface{}
+		switch argtypes[i] {
 		case 'i':
 			val = int32(C.msg_extract_int32(argv, C.int(i)))
 		case 'h':
@@ -53,7 +47,7 @@ func callback(path, ctypes *C.char, argv **C.lo_arg, argc int, user_data unsafe.
 		default:
 			val = "Unknown Type"
 		}
-		msg.Params = append(msg.Params, val)
+		result.Params = append(result.Params, val)
 	}
-	c <- msg
+	return result, nil
 }
